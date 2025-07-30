@@ -8,7 +8,7 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
 }
 
 class WebRTCStreamPage extends StatefulWidget {
-  const WebRTCStreamPage({super.key});
+  const WebRTCStreamPage({Key? key}) : super(key: key);
 
   @override
   _WebRTCStreamPageState createState() => _WebRTCStreamPageState();
