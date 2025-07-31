@@ -36,7 +36,6 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
   }
 
   Future<void> _connect() async {
-    // Define PC configuration
     Map<String, dynamic> configuration = {
       "iceServers": [
         {"url": "stun:stun.l.google.com:19302"},
@@ -57,14 +56,14 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
 
       final offerData = jsonDecode(offerResponse.body);
       final String pcId = offerData['id'];
-      final offer = RTCSessionDescription(offerData['sdp'], offerData['type']);
+      final String sdp = offerData['sdp'];
+      final String type = offerData['type'];
 
-      dev.log("Received offer: ${offer.sdp}");
+      dev.log("Received offer with sdp:\n$sdp");
 
       // 2. Create the PeerConnection
       _peerConnection = await createPeerConnection(configuration);
 
-      // Listen for incoming tracks
       _peerConnection!.onTrack = (RTCTrackEvent event) {
         if (event.track.kind == 'video') {
           dev.log('Received remote video track');
@@ -74,14 +73,20 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
         }
       };
 
-      // 3. Set the server's offer as the remote description
-      await _peerConnection!.setRemoteDescription(offer);
+      await _peerConnection!.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+      );
 
-      // 4. Create an answer
+      await _peerConnection!.setRemoteDescription(
+        RTCSessionDescription(sdp, type),
+      );
+
       final answer = await _peerConnection!.createAnswer();
+      dev.log("answer:\n${answer.sdp}");
       await _peerConnection!.setLocalDescription(answer);
 
-      dev.log("Created answer: ${answer.sdp}");
+      dev.log("Created answer");
 
       // 5. Send the answer back to the server
       final answerResponse = await http.post(
@@ -89,11 +94,7 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
         headers: <String, String>{
           'Content-Type': 'application/json; charset=UTF-8',
         },
-        body: jsonEncode({
-          'id': pcId, // Include the ID to identify the connection
-          'sdp': answer.sdp,
-          'type': answer.type,
-        }),
+        body: jsonEncode({'id': pcId, 'sdp': answer.sdp, 'type': answer.type}),
       );
 
       if (answerResponse.statusCode == 200) {
