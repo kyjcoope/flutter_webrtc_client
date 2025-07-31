@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'dart:developer' as dev;
@@ -45,7 +44,24 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
     };
 
     try {
-      // Create the PeerConnection
+      // 1. Request an offer from the server
+      dev.log("Requesting offer from server...");
+      final offerResponse = await http.get(
+        Uri.parse('$_signalingServerUrl/request-offer'),
+      );
+
+      if (offerResponse.statusCode != 200) {
+        dev.log("Failed to get offer from server");
+        return;
+      }
+
+      final offerData = jsonDecode(offerResponse.body);
+      final String pcId = offerData['id'];
+      final offer = RTCSessionDescription(offerData['sdp'], offerData['type']);
+
+      dev.log("Received offer: ${offer.sdp}");
+
+      // 2. Create the PeerConnection
       _peerConnection = await createPeerConnection(configuration);
 
       // Listen for incoming tracks
@@ -58,70 +74,35 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
         }
       };
 
-      // =======================================================================
-      // THE REAL FIX: Create a transceiver, then set its codec preferences.
-      // -----------------------------------------------------------------------
+      // 3. Set the server's offer as the remote description
+      await _peerConnection!.setRemoteDescription(offer);
 
-      // 1. Add a video transceiver that is set to receive-only.
-      // This creates the channel for the video to come through.
-      final transceiver = await _peerConnection!.addTransceiver(
-        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
-        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
-      );
+      // 4. Create an answer
+      final answer = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(answer);
 
-      // 2. Get the full list of system-supported codecs.
-      // Note: getCapabilities is a static method on the factory helper.
-      final videoCodecs = await getRtpSenderCapabilities('video');
+      dev.log("Created answer: ${answer.sdp}");
 
-      for (var codec in videoCodecs.codecs!) {
-        dev.log("Supported codec: ${codec.mimeType}");
-      }
-
-      // 3. Filter the list to find only the H264 codecs.
-      final h264Codecs = videoCodecs.codecs!
-          .where((codec) => codec.mimeType.toLowerCase() == 'video/h264')
-          .toList();
-
-      if (h264Codecs.isEmpty) {
-        dev.log("H.264 codec not supported by this device.");
-        return;
-      }
-
-      dev.log(
-        "Found supported H264 codecs: ${h264Codecs.map((e) => e.toMap())}",
-      );
-
-      // 4. Call setCodecPreferences on the TRANSCEIVER INSTANCE.
-      // This tells the WebRTC engine to only use H264 for this specific transceiver.
-      await transceiver.setCodecPreferences(h264Codecs);
-
-      // =======================================================================
-
-      // 5. Now, create the offer. The SDP will be correctly generated based
-      //    on the preferences we just set.
-      RTCSessionDescription offer = await _peerConnection!.createOffer();
-      dev.log('Offer: ${offer.sdp}');
-      await _peerConnection!.setLocalDescription(offer);
-
-      final response = await http.post(
-        Uri.parse('$_signalingServerUrl/offer'),
+      // 5. Send the answer back to the server
+      final answerResponse = await http.post(
+        Uri.parse('$_signalingServerUrl/submit-answer'),
         headers: <String, String>{
           'Content-Type': 'application/json; charset=UTF-8',
         },
-        body: jsonEncode({'sdp': offer.sdp, 'type': offer.type}),
+        body: jsonEncode({
+          'id': pcId, // Include the ID to identify the connection
+          'sdp': answer.sdp,
+          'type': answer.type,
+        }),
       );
 
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
-        final answer = RTCSessionDescription(body['sdp'], body['type']);
-        dev.log('Received answer: ${answer.sdp}');
-        await _peerConnection!.setRemoteDescription(answer);
-        dev.log("Connection established!");
+      if (answerResponse.statusCode == 200) {
+        dev.log("Answer submitted successfully. Connection established!");
       } else {
-        dev.log('Failed to connect to signaling server');
+        dev.log("Failed to submit answer to server");
       }
     } catch (e) {
-      dev.log("Error connecting: $e");
+      dev.log("Error during connection: $e");
     }
   }
 
@@ -141,7 +122,7 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
             padding: const EdgeInsets.all(16.0),
             child: ElevatedButton(
               onPressed: _connect,
-              child: const Text('Connect to Stream (H264)'),
+              child: const Text('Connect to Stream (Server Offer)'),
             ),
           ),
         ],
