@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
@@ -60,6 +61,8 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
       final String type = offerData['type'];
 
       dev.log("Received offer with sdp:\n$sdp");
+      final fixedSdp = mungeSdp(sdp);
+      dev.log("Munged SDP:\n$fixedSdp");
 
       // 2. Create the PeerConnection
       _peerConnection = await createPeerConnection(configuration);
@@ -130,4 +133,31 @@ class WebRTCStreamPageState extends State<WebRTCStreamPage> {
       ),
     );
   }
+}
+
+bool _isH264(String sdp) =>
+    RegExp(r'\bH264/90000\b', caseSensitive: false).hasMatch(sdp);
+
+String mungeSdp(String sdp) {
+  const iosAllowed = {'640c2a', '42e02a', '42e01f'};
+  final defaultId = Platform.isIOS ? '42e01f' : '42e01f';
+
+  // Fix profile‑level‑id
+  sdp = sdp.replaceAllMapped(RegExp(r'profile-level-id=([0-9A-Fa-f]{6})'), (m) {
+    final id = m[1]!.toLowerCase();
+    final goodId = Platform.isIOS
+        ? (iosAllowed.contains(id) ? id : defaultId)
+        : defaultId; // always 42e01f on Android
+    return 'profile-level-id=$goodId';
+  });
+
+  // Ensure level‑asymmetry‑allowed=1
+  if (!sdp.toLowerCase().contains('level-asymmetry-allowed')) {
+    sdp = sdp.replaceFirst(
+      'packetization-mode=1;',
+      'level-asymmetry-allowed=1;packetization-mode=1;',
+    );
+  }
+
+  return sdp;
 }
